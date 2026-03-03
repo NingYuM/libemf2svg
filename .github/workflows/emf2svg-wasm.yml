@@ -1,0 +1,75 @@
+name: emf2svg - WASM
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.head_ref || github.ref_name }}'
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: nu {0}
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Nushell
+        uses: hustcer/setup-nu@v3
+        with:
+          version: '0.111.0'
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '5.0.2'
+
+      - name: Build WASM
+        run: nu scripts/build-wasm.nu
+
+      - name: Verify artifacts
+        run: |
+          let dist = 'wasm-dist'
+          if not ($dist | path exists) {
+            print -e 'Error: wasm-dist directory not found'
+            exit 1
+          }
+          let files = ls $dist | get name
+          print $'Artifacts: ($files)'
+          if ($files | where ($it | str ends-with '.wasm') | is-empty) {
+            print -e 'Error: .wasm file not found'
+            exit 1
+          }
+          if ($files | where ($it | str ends-with '.mjs') | is-empty) {
+            print -e 'Error: .mjs file not found'
+            exit 1
+          }
+          print 'All artifacts verified.'
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: emf2svg
+          path: wasm-dist/
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            wasm-dist/emf2svg.mjs \
+            wasm-dist/emf2svg.wasm \
+            wasm-dist/emf2svg.opt.wasm

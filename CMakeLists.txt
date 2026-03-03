@@ -41,14 +41,17 @@ option(STATIC    "compile statically"           OFF)
 option(FORCELE   "force little endian architecture"   OFF)
 option(USE_SYSTEM_LIBUEMF "use system libuemf library instead of vendored" OFF)
 
-if(STATIC)
+if(EMSCRIPTEN)
+    set(SHARED "")
+    set(LONLY ON)
+elseif(STATIC)
     set(SHARED "SHARED")
     set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
     set(BUILD_SHARED_LIBRARIES OFF)
     set(CMAKE_EXE_LINKER_FLAGS "-static")
 else(STATIC)
     set(SHARED "SHARED")
-endif(STATIC)
+endif()
 
 if(GCOV)
   SET(UNITTEST ON)
@@ -60,10 +63,23 @@ if(UNITTEST)
   message(WARNING "LONLY cannot be used with GCOV and/or UNITTEST; ignoring")
 endif(UNITTEST)
 
-find_package(PNG REQUIRED)
-find_package(Freetype REQUIRED)
-find_package(Fontconfig REQUIRED)
-find_package(LibXml2 REQUIRED)
+if(EMSCRIPTEN)
+  add_definitions(-DEMF2SVG_NO_FONTCONFIG)
+  set(PNG_LIBRARIES "")
+  set(PNG_INCLUDE_DIRS "")
+  set(FREETYPE_LIBRARIES "")
+  set(FREETYPE_INCLUDE_DIRS "")
+  set(FONTCONFIG_LIBRARIES "")
+  set(FONTCONFIG_INCLUDE_DIRS "")
+  set(LIBXML2_LIBRARIES "")
+  set(EXTERNAL_ICONV "")
+  set(EXTERNAL_FMEM "")
+else()
+  find_package(PNG REQUIRED)
+  find_package(Freetype REQUIRED)
+  find_package(Fontconfig REQUIRED)
+  find_package(LibXml2 REQUIRED)
+endif()
 
 set(DEPS ${CMAKE_CURRENT_SOURCE_DIR}/deps)
 set(EXTERNAL_INCLUDE_DIR ${DEPS}/include)
@@ -79,7 +95,10 @@ set(PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches)
 
 # Configure fmem for memory-backed streams
 # On Linux, use native open_memstream; on other platforms, build external project
-if(UNIX AND NOT APPLE)
+if(EMSCRIPTEN)
+  message(STATUS "Using native open_memstream for fmem (Emscripten)")
+  set(EXTERNAL_FMEM "")
+elseif(UNIX AND NOT APPLE)
   # Linux: Use native implementation from inc/fmem.h using open_memstream
   message(STATUS "Using native open_memstream for fmem (Linux)")
   set(EXTERNAL_FMEM "")
@@ -190,10 +209,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   endif(MSVC)
 endif()
 
-if(UNIX)
+if(UNIX AND NOT EMSCRIPTEN)
   link_libraries(m)
   add_compile_options(-fPIC)
-endif(UNIX)
+endif()
 
 if(NOT FORCELE)
   include(TestBigEndian)
@@ -215,7 +234,21 @@ if(MSVC)
   set(EXTERNAL_ICONV ${Iconv_LIBRARY})
 endif(MSVC)
 
-if(MSVC)
+if(EMSCRIPTEN)
+  include_directories(
+    ./inc
+    ${EXTERNAL_INCLUDE_DIR}
+  )
+  if(USE_VENDORED_UEMF)
+    include_directories(${DEPS_UEMF})
+  else()
+    include_directories(${UEMF_INCLUDE_DIRS})
+  endif()
+  link_directories(
+    ${CMAKE_BINARY_DIR}
+    ${EXTERNAL_LIB_DIR}
+  )
+elseif(MSVC)
   include_directories(
     ./inc
     ${PNG_INCLUDE_DIRS}
@@ -235,7 +268,7 @@ if(MSVC)
     ${CMAKE_BINARY_DIR}
     ${EXTERNAL_LIB_DIR}
   )
-else(MSVC)
+else()
   include_directories(
     ./inc
     ${PNG_INCLUDE_DIRS}
@@ -258,7 +291,7 @@ else(MSVC)
     ${CMAKE_BINARY_DIR}
     ${EXTERNAL_LIB_DIR}
   )
-endif(MSVC)
+endif()
 
 # Conditionally add vendored libuemf sources
 if(USE_VENDORED_UEMF)
@@ -398,3 +431,19 @@ INSTALL(TARGETS ${BINTARGETS}
 )
 
 INSTALL(FILES inc/emf2svg.h DESTINATION ${INCLUDE_INSTALL_DIR})
+
+if(EMSCRIPTEN)
+  add_executable(emf2svg_wasm src/wasm/emf2svg_wasm.c)
+  target_link_libraries(emf2svg_wasm emf2svg)
+  target_compile_options(emf2svg_wasm PRIVATE -sUSE_LIBPNG=1 -sUSE_ZLIB=1)
+  target_compile_options(emf2svg PRIVATE -sUSE_LIBPNG=1 -sUSE_ZLIB=1)
+  set_target_properties(emf2svg_wasm PROPERTIES
+    OUTPUT_NAME "emf2svg"
+    SUFFIX ".mjs"
+    LINK_FLAGS "-sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME='createEmf2svg' \
+      -sALLOW_MEMORY_GROWTH=1 -sUSE_LIBPNG=1 -sUSE_ZLIB=1 \
+      -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','getValue','UTF8ToString'] \
+      -sEXPORTED_FUNCTIONS=['_emf2svg_convert','_emf2svg_free','_malloc','_free'] \
+      -sENVIRONMENT='web,worker'"
+  )
+endif()

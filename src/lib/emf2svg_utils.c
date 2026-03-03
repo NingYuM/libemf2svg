@@ -13,9 +13,11 @@ extern "C" {
 #include <string.h>
 #include <iconv.h>
 #include <errno.h>
+#ifndef EMF2SVG_NO_FONTCONFIG
 #include <ft2build.h>
 #include <fontconfig/fontconfig.h>
 #include FT_FREETYPE_H
+#endif
 
 void U_EMRNOTIMPLEMENTED_draw(const char *name, const char *contents, FILE *out,
                               drawingStates *states) {
@@ -1036,6 +1038,21 @@ void text_style_draw(FILE *out, drawingStates *states, POINT_D Org) {
 }
 
 // get the closest ttf file matching font_family, weight, italic
+#ifdef EMF2SVG_NO_FONTCONFIG
+// Stub: fontconfig/freetype not available, fontindex_to_utf8 always fails
+static int fontindex_to_utf8(uint16_t *in, size_t size_in, char **out,
+                             size_t *out_len, char *font_name, int weight,
+                             bool italic) {
+    UNUSED(in);
+    UNUSED(size_in);
+    UNUSED(font_name);
+    UNUSED(weight);
+    UNUSED(italic);
+    *out = NULL;
+    *out_len = 0;
+    return 1;
+}
+#else
 static int get_fontpath(char *font_family, int weight, int italic,
                         char **path) {
     FcPattern *pat;
@@ -1303,6 +1320,7 @@ static int fontindex_to_utf8(uint16_t *in, size_t size_in, char **out,
     *out = buf;
     return 0;
 }
+#endif /* !EMF2SVG_NO_FONTCONFIG */
 
 static int enc_to_utf8(char *in, size_t size_in, char **out, size_t *out_len,
                        char *from_enc) {
